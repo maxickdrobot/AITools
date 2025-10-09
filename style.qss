@@ -1,0 +1,43 @@
+QMainWindow {
+    background-color: #121212;
+    color: #ffffff;
+}
+
+QPushButton {
+    color: #ffffff;
+    border-radius: 6px;
+    padding: 6px;
+}
+
+QPushButton:hover {
+    background-color: #333333;
+    background-color: #1f1f1f;
+}
+
+QPushButton:pressed {
+    background-color: #555555;
+}
+
+QMainWindow QLabel {
+    color: #e0e0e0;
+}
+
+QScrollArea {
+    border: none;
+    background: transparent;
+}
+
+QScrollArea > QWidget > QWidget {
+    background-color: #333333;
+}
+
+
+#mini_menu_widget QPushButton:checked,
+#menu_widget QPushButton:checked {
+    background-color: #2e2e2e;
+}
+
+#content {
+    background-color: #2e2e2e;
+}
+

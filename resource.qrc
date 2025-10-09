@@ -1,0 +1,14 @@
+<RCC>
+  <qresource prefix="icons">
+    <file>icons/save.ico</file>
+    <file>icons/logo.png</file>
+    <file>icons/undo.ico</file>
+    <file>icons/download_data.ico</file>
+    <file>icons/start.ico</file>
+    <file>icons/AI_off.ico</file>
+    <file>icons/AI_on.ico</file>
+    <file>icons/close.ico</file>
+    <file>icons/download_file.ico</file>
+    <file>icons/menu.ico</file>
+  </qresource>
+</RCC>
