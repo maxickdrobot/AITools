@@ -1,8 +1,10 @@
-from PyQt5.QtWidgets import QWidget, QFileDialog, QVBoxLayout, QPushButton, QLabel
-from workers.train_worker import TrainWorker
 import tensorflow as tf
+import pandas as pd
 import numpy as np
+from PyQt5.QtWidgets import QWidget, QFileDialog, QVBoxLayout, QPushButton, QLabel, QMessageBox, QComboBox
+from workers.RegressionTrainWorker import RegressionTrainWorker
 from ui.layer_widget import LayerWidget
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 class Model1Page(QWidget):
     def __init__(self, ui):
@@ -12,8 +14,9 @@ class Model1Page(QWidget):
         self.selected_file = None
         self.training_thread = None
         self.trained_model = None
-        self.encoder = None
+        self.scaler = None
         self.X_data = None
+        self.encoder = None  # для категоріальних колонок
         self.layer_widgets = []
 
         # Container for layers
@@ -56,73 +59,102 @@ class Model1Page(QWidget):
             self,
             "Select Excel file for training",
             "",
-            "Excel Files (*.xls *.xlsx);;All Files (*)"
+            "Excel Files (*.xls *.xlsx *.csv);;All Files (*)"
         )
-        if file_path:
-            self.selected_file = file_path
-            self.ui.model_1_file.setText(f"Selected file: {file_path.split('/')[-1]}")
+        if not file_path:
+            return
+
+        self.selected_file = file_path
+        self.ui.model_1_file.setText(f"Selected file: {file_path.split('/')[-1]}")
+
+        try:
+            df = pd.read_excel(file_path, nrows=0) if file_path.endswith((".xls", ".xlsx")) else pd.read_csv(file_path, nrows=0)
+            columns = df.columns.tolist()
+
+            self.ui.model_1_target_column.clear()
+            self.ui.model_1_target_column.addItems(columns)
+            self.ui.model_1_target_column.setEnabled(True)
+            self.ui.model_1_target_column.show()
+        except Exception as e:
+            self.show_error(f"Error reading file: {e}")
 
     def start_learning(self):
+        if not self.selected_file:
+            self.show_error("Please select a file first.")
+            return
+
+        target_column = self.ui.model_1_target_column.currentText()
+        if not target_column:
+            self.show_error("Please select a target column.")
+            return
+
         try:
-            epochs = int(self.ui.model_1_epochs_input.text() or "30")
+            epochs = int(self.ui.model_1_epochs_input.text() or "15")
             dropout = float(self.ui.model_1_dropout_input.text() or "0.2")
         except ValueError:
-            self.ui.model_1_result.setText("Error: invalid numeric value.")
+            self.show_error("Error: invalid numeric value.")
             return
 
         layers_config = [(w.neurons.value(), w.activation.currentText()) for w in self.layer_widgets]
         if not layers_config:
-            self.ui.model_1_result.setText("Error: add at least one layer.")
+            self.show_error("Error: add at least one layer.")
             return
 
-        file_to_use = self.selected_file if self.selected_file else "iris.xls"
-
+        # Починаємо UI стан навчання
         self.ui.model_1_progress.show()
         self.ui.model_1_progress.setValue(0)
         self.ui.model_1_start_learning.setEnabled(False)
         self.ui.model_1_start_learning.setText("Training...")
 
-        self.training_thread = TrainWorker(
-            file_path=file_to_use,
-            epochs=epochs,
-            layers=layers_config,
-            dropout=dropout
-        )
-        self.training_thread.progress.connect(self.ui.model_1_progress.setValue)
-        self.training_thread.finished.connect(self.training_done)
-        self.training_thread.start()
+        try:
+            self.training_thread = RegressionTrainWorker(
+                file_path=self.selected_file,
+                target_column=target_column,
+                epochs=epochs,
+                layers=layers_config,
+                dropout=dropout
+            )
+            self.training_thread.progress.connect(self.ui.model_1_progress.setValue)
+            self.training_thread.message.connect(self.show_error)
+            self.training_thread.finished.connect(self.training_done)
+            self.training_thread.start()
+        except Exception as e:
+            self.show_error(f"Training start error: {e}")
 
-    def training_done(self, model, acc, history, encoder, X_data):
+    def training_done(self, model, loss, history, scaler, X_data, encoder=None):
         self.ui.model_1_progress.hide()
-        self.trained_model = model
-        self.encoder = encoder
+        self.trained_model = tf.keras.models.load_model("temp_model.keras")
+
+        self.scaler = scaler
         self.X_data = X_data
+        self.encoder = encoder
 
         self.ui.model_1_save.setEnabled(True)
         self.ui.model_1_start_learning.setEnabled(True)
         self.ui.model_1_start_learning.setText("Start learning")
         self.ui.model_1_container.setCurrentIndex(1)
 
-        self.show_predictions(acc, history)
+        self.show_predictions(loss, history)
 
-    def show_predictions(self, acc=None, history=None):
-        if not self.trained_model or self.X_data is None or self.encoder is None:
-            self.ui.model_1_result.setText("Model is not trained or data is missing.")
+    def show_predictions(self, loss=None, history=None):
+        if not self.trained_model or self.X_data is None:
+            self.show_error("Model is not trained or data is missing.")
             return
 
-        logits = self.trained_model.predict(self.X_data)
-        pred_indices = np.argmax(logits, axis=1)
-        pred_classes = self.encoder.inverse_transform(pred_indices)
+        X_input = self.X_data.copy()
+        if self.encoder:
+            X_input = self.encoder.transform(X_input)
 
+        preds = self.trained_model.predict(X_input).flatten()
         n = self.ui.model_1_prediction_count.value()
-        n = min(n, len(pred_classes))
-        sample_predictions = "\n".join([f"{i + 1}: {cls}" for i, cls in enumerate(pred_classes[:n])])
+        n = min(n, len(preds))
+        sample_predictions = "\n".join([f"{i + 1}: {val:.4f}" for i, val in enumerate(preds[:n])])
 
         info = ""
-        if acc is not None and history is not None:
+        if loss is not None and history is not None:
             info += (
                 f"Model trained.\n"
-                f"Test accuracy: {acc:.2f}\n"
+                f"Test loss: {loss:.4f}\n"
                 f"Epochs: {len(history.history['loss'])}\n"
                 f"Number of layers: {len(self.layer_widgets)}\n\n"
             )
@@ -159,20 +191,8 @@ class Model1Page(QWidget):
             self.ui.model_1_container.setCurrentIndex(1)
             self.ui.model_1_save.setEnabled(True)
             self.ui.model_1_upload_model.setEnabled(True)
-            # If data exists, show predictions; else ask to load data
-            if self.X_data is not None and self.encoder is not None:
+            if self.X_data is not None:
                 self.show_predictions()
-            elif self.selected_file:
-                self.prepare_data_for_prediction(self.selected_file)
-            else:
-                self.ui.model_1_result.setText(
-                    f"Model loaded: {file_path}\nNo data loaded for predictions."
-                )
-
-    def prepare_data_for_prediction(self, file_path):
-        from utils.data_loader import load_data_and_encoder  # example
-        self.X_data, self.encoder = load_data_and_encoder(file_path)
-        self.show_predictions()
 
     def reset_model(self):
         if self.training_thread:
@@ -181,11 +201,11 @@ class Model1Page(QWidget):
             self.training_thread = None
 
         self.trained_model = None
-        self.encoder = None
+        self.scaler = None
         self.X_data = None
+        self.encoder = None
         self.selected_file = None
 
-        # Clear UI
         self.ui.model_1_result.clear()
         self.ui.model_1_file.setText("")
         self.ui.model_1_save.setEnabled(False)
@@ -193,17 +213,20 @@ class Model1Page(QWidget):
         self.ui.model_1_start_learning.setText("Start learning")
         self.ui.model_1_container.setCurrentIndex(0)
 
-        # Reset layers
         for w in self.layer_widgets:
             w.setParent(None)
         self.layer_widgets.clear()
         self.add_layer()
 
-        # Reset progress
         self.ui.model_1_progress.setValue(0)
         self.ui.model_1_progress.hide()
 
-        # Reset input fields
         self.ui.model_1_epochs_input.clear()
         self.ui.model_1_dropout_input.clear()
-        self.ui.model_1_prediction_count.setValue(10)  # default
+        self.ui.model_1_prediction_count.setValue(40)
+        self.ui.model_1_target_column.hide()
+        self.ui.model_1_target_column.clear()
+
+    def show_error(self, message):
+        self.reset_model()
+        QMessageBox.critical(self, "Error", message)

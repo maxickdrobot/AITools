@@ -31,7 +31,6 @@ QScrollArea > QWidget > QWidget {
     background-color: #333333;
 }
 
-
 #mini_menu_widget QPushButton:checked,
 #menu_widget QPushButton:checked {
     background-color: #2e2e2e;
